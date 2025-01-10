@@ -1,30 +1,39 @@
 firstseen_lastseen.py
-This program is a MISP (Malware Information Sharing Platform) attribute processor designed to update attributes with accurate timestamps for their first and last sightings. It streamlines the process of managing and enriching threat intelligence data by leveraging MISP's API and multithreaded processing.
+
+Purpose and Workflow of the Script
+This program is designed to efficiently process and update attributes in a MISP (Malware Information Sharing Platform) instance. It focuses on ensuring that the first_seen and last_seen timestamps for attributes are accurate, thereby enhancing the value of threat intelligence data.
 
 Purpose
-The primary goal is to ensure MISP attributes include first_seen and last_seen timestamps, improving data accuracy and value for threat intelligence analysis.
+Attribute Enrichment:
+Updates attributes in MISP with accurate first_seen and last_seen timestamps based on occurrence history.
 
+Scalability:
+Handles large datasets with a multithreaded architecture for faster processing.
+
+Error Management:
+Implements robust error logging and retries for uninterrupted operation.
+
+Connection Pool Management:
+Dynamically manages thread creation based on the connection pool's availability to avoid overload.
 Workflow
-Configuration:
-The user specifies the MISP URL, API key, and attribute types to process.
-Logging and error handling are set up to track progress and handle issues gracefully.
 
-Progress Tracking:
-The program reads from a progress file to resume processing from the last processed attribute.
-Progress is periodically saved to avoid data loss in case of interruptions.
+Configuration:
+User specifies MISP instance details, batch size, logging options, and attribute types to process.
+
+Progress Management:
+The program loads the last processed attribute ID from a progress file and resumes processing from there.
+Progress is periodically saved to avoid reprocessing in case of an interruption.
 
 Attribute Processing:
-Attributes are fetched from MISP in batches based on user-defined types.
-For each attribute, the earliest and latest timestamps are determined by querying related occurrences.
+Fetches attributes from MISP in batches based on user-defined attribute types.
+Determines first_seen and last_seen timestamps by querying historical occurrences of each attribute.
 
 Concurrency:
-Multithreading ensures efficient processing of attributes, even with large datasets.
-A mechanism is in place to manage connection pool limitations and randomize pauses in thread execution when needed.
+Uses a thread pool to process attributes concurrently.
+Pauses thread creation when the connection pool is full and resumes after clearing.
 
 Error Handling:
-Errors during processing are logged for review without halting the entire program.
-Connection issues trigger automatic retries with a delay.
+Logs errors and skips problematic attributes while ensuring the process continues.
 
 Completion:
-Once all attributes are processed, the program logs a completion message.
-The program is highly configurable, allowing users to add or remove attribute types as needed and customize batch sizes, logging behavior, and concurrency settings. This flexibility makes it an effective tool for enriching MISP data in diverse threat intelligence workflows.
+Logs a completion message when all attributes are processed.

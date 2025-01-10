@@ -13,7 +13,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Event, Lock
 from requests.adapters import HTTPAdapter
 from requests.sessions import Session
-import random
 
 # Disable warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -26,7 +25,7 @@ progress_file = "misp_attribute_progress.txt"
 batch_size = 10000
 log_batch_size = 10  # Number of logs before flushing
 error_log_file = "error_log.txt"  # Log file for errors
-pause_duration = 5  # Duration to pause threads in seconds
+pause_duration = 10  # Duration to stop thread creation in seconds
 
 # Determine optimal max_workers for ThreadPoolExecutor
 io_multiplier = 2  # Use 2x cores for I/O-bound tasks
@@ -35,7 +34,6 @@ max_workers = min(100, io_multiplier * cpu_count)  # Cap max_workers at 100
 
 # Increase the connection pool size
 def create_custom_session(pool_connections=500, pool_maxsize=1000):
-    """Create a custom session with an increased connection pool size."""
     session = Session()
     adapter = HTTPAdapter(pool_connections=pool_connections, pool_maxsize=pool_maxsize)
     session.mount("https://", adapter)
@@ -66,10 +64,24 @@ error_logger.setLevel(logging.ERROR)
 error_file_handler = logging.FileHandler(error_log_file)
 error_logger.addHandler(error_file_handler)
 
-# Event to signal threads to pause/resume
-pause_event = Event()
-pause_event.set()  # Allow threads to proceed initially
-pause_lock = Lock()
+# Event to control thread creation
+creation_allowed_event = Event()
+creation_allowed_event.set()  # Allow thread creation initially
+
+# Monitor urllib3 log for "Connection pool is full"
+urllib3_logger = logging.getLogger("urllib3.connectionpool")
+urllib3_logger.setLevel(logging.WARNING)
+
+class ConnectionPoolHandler(logging.Handler):
+    def emit(self, record):
+        if "Connection pool is full" in record.getMessage():
+            logger.warning("Stopping thread creation due to connection pool full...")
+            creation_allowed_event.clear()  # Stop thread creation
+            time.sleep(pause_duration)  # Pause for 10 seconds
+            creation_allowed_event.set()  # Resume thread creation
+            logger.info("Resuming thread creation after clearing the connection pool.")
+
+urllib3_logger.addHandler(ConnectionPoolHandler())
 
 def load_progress():
     """Load the last processed attribute ID from the progress file."""
@@ -116,8 +128,8 @@ def process_single_attribute(attribute):
     """Process a single attribute."""
     attribute_id = int(attribute['id'])
     try:
-        while not pause_event.is_set():
-            time.sleep(0.1)  # Wait until pause event is cleared
+        while not creation_allowed_event.is_set():
+            time.sleep(0.1)  # Wait for thread creation to be allowed
 
         first_seen, last_seen = get_earliest_and_latest(attribute)
         if not first_seen or not last_seen:
@@ -133,13 +145,6 @@ def process_single_attribute(attribute):
         logger.info(f"Updated attribute ID {attribute_id} with first_seen: {first_seen}, last_seen: {last_seen}")
         return attribute_id, True
     except Exception as e:
-        if "Connection pool full" in str(e):
-            with pause_lock:
-                if random.random() < 0.5:  # Randomly pause ~50% of threads
-                    pause_event.clear()
-                    logger.warning("Pausing some threads due to connection pool full...")
-                    time.sleep(pause_duration)
-                    pause_event.set()
         error_logger.error(f"Attribute ID {attribute_id}, Error: {e}, Attribute: {attribute}")
         logger.error(f"Error processing attribute ID {attribute_id}: {e}")
         return attribute_id, False
@@ -150,7 +155,14 @@ def process_batch_concurrently(attributes):
     failed_attributes = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_attribute = {executor.submit(process_single_attribute, attr): attr for attr in attributes}
+        future_to_attribute = {}
+
+        for attr in attributes:
+            while not creation_allowed_event.is_set():
+                time.sleep(0.1)  # Wait for thread creation to be allowed
+
+            future = executor.submit(process_single_attribute, attr)
+            future_to_attribute[future] = attr
 
         for future in as_completed(future_to_attribute):
             attribute_id, success = future.result()
@@ -207,4 +219,3 @@ if __name__ == "__main__":
     except Exception as fatal_error:
         logger.error(f"Fatal error: {fatal_error}. Progress saved. Exiting.")
     logger.info("Processing complete.")
-
